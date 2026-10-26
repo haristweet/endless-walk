@@ -126,7 +126,7 @@ input[type=number]{width:110px;background:#1b1b20;border:1px solid var(--line);b
 <script src="mp4-muxer.js"></script>
 <script>
 'use strict';
-const VERSION = '1.2.1';
+const VERSION = '1.3.0';
 
 // ---------- 乱数・小道具 ----------
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
@@ -147,7 +147,9 @@ const KINDS={
 };
 KINDS.sendai={name:'杜の都・仙台',far:170,W:2.6,line:[210,255,170],acc:[232,200,90],
   msgs:['ケヤキ並木が 気持ちいい','牛たんの においが する','七夕飾りが 風に ゆれる','広瀬川の 音が 聞こえる','ずんだシェイクが 飲みたい','杜の都を 歩く','ベガルタの 旗が 見える','国分町は 今夜も にぎやかだ']};
-const KIND_ORDER=['japan','sendai','europe','neon','harbor'];
+KINDS.india={name:'インドの街並み',far:150,W:3.0,line:[255,196,110],acc:[255,150,60],
+  msgs:['チャイの 香りが する','クラクションが 鳴りやまない','牛が のんびり 歩いている','スパイスの においが する','オートリキシャが 走りぬける','マリーゴールドの 花かざりだ','寺院の 鐘が 鳴っている','サリーの 色が あざやかだ']};
+const KIND_ORDER=['japan','sendai','europe','india','neon','harbor'];
 const COMMON_MSGS=['のんびり 歩こう','どこまでも 続く 道だ','少し 休みたくなってきた','気ままに 歩く'];
 const TIME_MSGS=[[5.5,'空が 白んできた'],[7,'朝の 光が まぶしい'],[12,'お昼どきだ'],[17.5,'日が 傾いてきた'],[19,'街に 灯りが ともった'],[23,'夜も ふけてきた']];
 const SEG=30;
@@ -157,7 +159,7 @@ class Region{
   constructor(seed,idx,kind){
     this.seed=seed;this.idx=idx;this.kind=kind;this.K=KINDS[kind];this.W=this.K.W;
     const r=mulberry32(hash(seed,idx,77)),pick=a=>a[(r()*a.length)|0];
-    const A={japan:4,europe:5,neon:2,harbor:6,sendai:1.2}[kind],F={japan:.012,europe:.015,neon:.01,harbor:.008,sendai:.01}[kind];
+    const A={japan:4,europe:5,neon:2,harbor:6,sendai:1.2,india:3.5}[kind],F={japan:.012,europe:.015,neon:.01,harbor:.008,sendai:.01,india:.013}[kind];
     this.wx=[.65,.35].map((k,i)=>({a:A*k,f:F*(1+i*1.8)*(.8+r()*.4),p:r()*6.283}));
     this.hill=kind==='harbor'?{a:4,f:.01*(.8+r()*.4),p:r()*6.283}:null;
     this.land=r()<.5?-1:1;this.poleSide=r()<.5?-1:1;
@@ -171,6 +173,8 @@ class Region{
         shop:[C(255,90,70),C(255,200,60),C(80,180,255),C(255,140,200),C(120,230,140)],
         tana:[C(255,90,140),C(255,214,60),C(80,170,255),C(120,220,120),C(190,110,255),C(255,120,60),C(250,250,250)],
         bld:[C(44,44,56),C(52,48,60),C(38,42,54)],sign:[C(255,60,160),C(60,220,255),C(255,220,60),C(140,90,255),C(80,255,140),C(255,90,60)]},
+      india:{wall:[C(232,130,160),C(70,180,180),C(240,160,60),C(240,210,90),C(150,200,90),C(90,140,210),C(214,140,110),C(236,230,214)],
+        cloth:[C(220,40,60),C(250,140,30),C(40,120,200),C(40,170,90),C(230,60,160),C(250,210,40)],stone:pick([C(214,170,120),C(236,226,206)])},
       harbor:{wall:[C(244,244,238),C(238,232,220),C(226,236,240)],door:[C(40,90,170),C(30,120,150),C(200,90,50)],roof:C(186,92,60),sea:pick([C(36,104,150),C(30,90,130)])},
     }[kind];
     this.segs=new Map();
@@ -422,6 +426,82 @@ function buildSeg(R,i){
         for(const zl of[z0-5,z0-25]){const x=R.px(zl)+sd*3.9;m.cyl(x,0,zl,.07,3.4,.06,6,C(40,44,46));lamp(x,3.6,zl);}
       }
     }
+  }else if(R.kind==='india'){
+    fill(C(150,124,92));road(C(124,104,84),null);
+    // 道ばたの土の帯
+    for(let z=z0;z>z1;z-=2){const a=R.px(z),b=R.px(z-2);for(const sd of[-1,1])m.quad([a+sd*W,.01,z],[a+sd*(W-.8),.01,z],[b+sd*(W-.8),.01,z-2],[b+sd*W,.01,z-2],C(164,132,96));}
+    // 6区切りに一度、片側を2区切りぶん空けて広場にし、奥に寺院の塔か玉ねぎ屋根の建物を建てる
+    // （細い通りの家並みに隠れないように、手前から見通せる広場の奥に置く）
+    const grp=Math.floor(i/6),ph=i%6,plaza=ph===2||ph===3?(hash(R.seed,R.idx,grp,17)%2?1:-1):0,dome=hash(R.seed,R.idx,grp,18)%2===0;
+    for(const sd of[-1,1]){
+      if(sd===plaza){
+        for(let z=z0;z>z1;z-=3){const a=R.px(z),b=R.px(z-3);m.quad([a+sd*W,.015,z],[a+sd*(W+40),.015,z],[b+sd*(W+40),.015,z-3],[b+sd*W,.015,z-3],C(196,170,134));}
+        for(let k=0;k<3;k++){const z=z0-4-r()*(SEG-8),x=R.px(z)+sd*(W+3+r()*6);m.cyl(x,0,z,.25,3,.2,6,C(110,84,60));m.rock(x,4.2,z,2.2,pick([C(60,120,50),C(80,140,60)]),r);}
+        if(ph===2)continue;
+        const cz=z0-20,cx=R.px(cz)+sd*(W+17),st=P.stone,q=1;
+        const B=(x0,y0,z0_,x1,y1,z1_,c)=>m.box(cx+x0*q,y0*q,cz+z0_*q,cx+x1*q,y1*q,cz+z1_*q,c);
+        B(-6,0,-6,6,.8,6,st.map(v=>v*.85));
+        if(dome){
+          B(-4.5,.8,-4.5,4.5,8,4.5,st);
+          m.quad([cx-sd*4.55*q,.8*q,cz+1.3*q],[cx-sd*4.55*q,.8*q,cz-1.3*q],[cx-sd*4.55*q,5.5*q,cz-1.3*q],[cx-sd*4.55*q,5.5*q,cz+1.3*q],C(90,60,40));
+          m.cyl(cx,8*q,cz,3*q,9.5*q,3*q,12,st);
+          const pr=[[0,1],[.25,1.18],[.5,1.12],[.72,.82],[.88,.45],[1,.06]];
+          for(let k=0;k<pr.length-1;k++)m.cyl(cx,(9.5+pr[k][0]*7)*q,cz,3*pr[k][1]*q,(9.5+pr[k+1][0]*7)*q,3*pr[k+1][1]*q,12,C(244,240,230));
+          m.cyl(cx,16.5*q,cz,.1*q,18*q,.04*q,6,C(220,180,60));
+          for(const[ox,oz]of[[-4.2,-4.2],[4.2,-4.2],[-4.2,4.2],[4.2,4.2]]){m.cyl(cx+ox*q,.8*q,cz+oz*q,.45*q,13*q,.4*q,8,st);m.cyl(cx+ox*q,13*q,cz+oz*q,.6*q,13.6*q,.6*q,8,st);m.pyramid(cx+ox*q,13.6*q,cz+oz*q,.6*q,1.6*q,C(244,240,230));}
+        }else{
+          // シカラ（寺院の塔）：段を重ねて細くし、頂に金の飾りと旗
+          B(-4,.8,-4,4,6,4,st);
+          m.quad([cx-sd*4.05*q,.8*q,cz+q],[cx-sd*4.05*q,.8*q,cz-q],[cx-sd*4.05*q,4.6*q,cz-q],[cx-sd*4.05*q,4.6*q,cz+q],C(70,50,36));
+          for(let k=0;k<6;k++){const w=3.6-k*.5,y=6+k*2.2;B(-w,y,-w,w,y+2.2,w,st.map(v=>v*(k%2?.92:1)));}
+          m.pyramid(cx,19.2*q,cz,.9*q,2.2*q,st);m.oct(cx,21.8*q,cz,.45*q,.6*q,C(230,180,40));
+          m.cyl(cx,21.6*q,cz,.04*q,24.5*q,.04*q,4,C(90,70,50));m.tri([cx,24.5*q,cz],[cx,23.6*q,cz],[cx+sd*1.6*q,24.1*q,cz],C(250,130,20));
+        }
+        lamp(cx-sd*6.3*q,2.4,cz+5*q);lamp(cx-sd*6.3*q,2.4,cz-5*q);
+        objs.push({x:cx,z:cz,w:12*q,d:12*q});
+        continue;
+      }
+      row(sd,{wmin:4,wmax:7,gap:.3,set:.5,depth:8,h:()=>3.2*(2+((r()*3)|0))+.6,cols:P.wall,deco:(fx,sd,za,zb,yb,h,d,col)=>{
+        const x=fx-sd*.03,zc=(za+zb)/2,cl=pick(P.cloth);
+        // 1階の店：開いた間口・日よけ・看板
+        m.quad([x,yb+.1,za-.4],[x,yb+.1,zb+.4],[x,yb+2.4,zb+.4],[x,yb+2.4,za-.4],vary(C(160,112,76)),1);
+        m.quad([x,yb+3.1,za-.2],[x,yb+3.1,zb+.2],[x-sd*1.2,yb+2.5,zb+.2],[x-sd*1.2,yb+2.5,za-.2],cl);
+        m.quad([x-sd*.02,yb+3.15,za-.3],[x-sd*.02,yb+3.15,zb+.3],[x-sd*.02,yb+3.7,zb+.3],[x-sd*.02,yb+3.7,za-.3],pick(P.cloth).map(v=>v*.9+.08));
+        if(r()<.4)for(let k=0;k<3;k++)m.box(x-sd*.2,yb+.2,zc-1+k*.7,x-sd*.9,yb+.75,zc-.5+k*.7,pick(P.cloth));
+        // 上の階：窓とバルコニー
+        wins(fx,sd,za,zb,yb+4.1,yb+h-.9,{cw:1.8,ww:.9,wh:1.3,fh:3.2,col:C(255,206,140),p:.5,each:(wx,y,wz)=>{
+          if(r()<.3){m.box(wx,y-.25,wz-.75,wx-sd*.7,y-.1,wz+.75,col.map(v=>v*.8));m.box(wx-sd*.66,y-.1,wz-.75,wx-sd*.7,y+.6,wz+.75,col.map(v=>v*.7));}
+        }});
+        // 屋上の縁と水タンク
+        m.box(fx,yb+h,zb,fx-sd*.2,yb+h+.6,za,col.map(v=>v*.85));
+        if(r()<.35)m.cyl(fx+sd*d*.5,yb+h,zc,.55,yb+h+1.2,.55,8,C(36,36,40));
+      }});
+    }
+    // 頭上の電線（たるんで、からまる）
+    const ps=R.poleSide;
+    for(let zp=Math.ceil(z1/10)*10;zp<=z0;zp+=10){
+      const x=R.px(zp)+ps*(W+.1),x2=R.px(zp-10)+ps*(W+.1),pc=C(120,116,108);
+      m.cyl(x,0,zp,.12,7.5,.1,6,pc);m.box(x-.6,7,zp-.06,x+.6,7.1,zp+.06,pc);
+      for(let k=0;k<4;k++){const o=(k-1.5)*.4,y=7.1-k*.25,sag=.5+k*.3,mid=[(x+x2)/2+o,y-sag,zp-5];
+        m.wire([x+o,y,zp],mid,.035,C(30,28,26));m.wire(mid,[x2+o,y,zp-10],.035,C(30,28,26));}
+      if((zp/10)%2===0){lamp(x-ps*1.1,5.4,zp,C(255,200,120));m.box(x,5.45,zp-.05,x-ps*1.1,5.55,zp+.05,pc);}
+    }
+    // マリーゴールドの花かざり（通りを横切る）
+    if(i%3===1)for(const zg of[z0-8,z0-20]){
+      const a=R.px(zg);
+      for(let k=0;k<=28;k++){const t=k/28,xx=a-W-.5+t*(2*W+1),y=5.6-1.1*Math.sin(t*Math.PI);
+        m.oct(xx,y,zg,.16,.16,k%2?C(255,150,20):C(255,206,40));}
+    }
+    // 道ばたの牛とオートリキシャ
+    if(r()<.4){const z=z0-3-r()*(SEG-6),sd=r()<.5?-1:1,x=R.px(z)+sd*(W-.7),cw=C(236,232,222);
+      m.box(x-.3,.6,z-.8,x+.3,1.2,z+.8,cw);
+      for(const[lx,lz]of[[-.2,-.65],[.2,-.65],[-.2,.65],[.2,.65]])m.box(x+lx-.06,0,z+lz-.06,x+lx+.06,.6,z+lz+.06,cw.map(v=>v*.9));
+      m.box(x-.17,.95,z-1.25,x+.17,1.35,z-.8,cw);m.box(x-.22,1.2,z-.85,x+.22,1.42,z-.65,C(150,140,128));
+      for(const sx of[-1,1])m.box(x+sx*.12,1.35,z-1.05,x+sx*.18,1.65,z-1,C(200,190,170));}
+    if(r()<.55){const z=z0-3-r()*(SEG-6),sd=r()<.5?-1:1,x=R.px(z)+sd*(W-.75),g=C(50,140,70),y=C(244,200,40);
+      m.box(x-.6,.3,z-1.2,x+.6,1.1,z+.9,g);m.box(x-.62,1.1,z-.9,x+.62,1.75,z+1.05,y);m.box(x-.3,.3,z-1.6,x+.3,1,z-1.2,g);
+      m.box(x-.12,.62,z-1.62,x+.12,.8,z-1.6,C(255,250,220),1);
+      for(const[wx,wz]of[[0,-1.4],[-.62,.6],[.62,.6]])m.box(x+wx-.08,0,z+wz-.25,x+wx+.08,.45,z+wz+.25,C(30,30,30));}
   }else{
     const land=R.land,sea=-land;
     road(C(166,162,150),null);
@@ -905,6 +985,8 @@ let cfg={...DEF};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('endless-walk')||'{}'));}catch(e){}
 if(!RES[cfg.aspect].some(r=>r[0]===cfg.res))cfg.res=RES[cfg.aspect].at(-1)[0];
 if(!Array.isArray(cfg.scenes)||!cfg.scenes.length||!cfg.scenesV){cfg.scenes=[...KIND_ORDER];cfg.scenesV=2;}
+// v1.3.0 で足した街は、これまで選んでいた街に加える
+if(cfg.scenesV<3){if(!cfg.scenes.includes('india'))cfg.scenes.push('india');cfg.scenesV=3;}
 cfg.scenes=cfg.scenes.filter(k=>KINDS[k]);
 const save=()=>{try{localStorage.setItem('endless-walk',JSON.stringify(cfg));}catch(e){}};
 
