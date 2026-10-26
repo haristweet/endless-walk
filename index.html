@@ -103,6 +103,8 @@ input[type=number]{width:110px;background:#1b1b20;border:1px solid var(--line);b
           <h3>歌詞</h3><div class="seg" data-key="lyrics"></div>
           <div class="row" style="margin-top:6px"><label class="chip" style="display:inline-flex;align-items:center">歌詞のファイルを選ぶ<input type="file" id="lfile" accept=".lrc,.srt,.vtt,text/plain" hidden></label></div>
           <p class="note" id="linfo"></p>
+          <h3>終わり方</h3><div class="seg" data-key="ending"></div>
+          <p class="note">「車に跳ねられる」にすると、終わりの数秒前に前から車が走ってきて、曲が終わるところで跳ねられて BAD END になります（長さを曲と違えたときは、書き出しの終わりに合わせます）。</p>
         </div>
         <h3>長さ</h3>
         <div class="seg" data-key="minutes"></div>
@@ -123,7 +125,7 @@ input[type=number]{width:110px;background:#1b1b20;border:1px solid var(--line);b
 <script src="mp4-muxer.js"></script>
 <script>
 'use strict';
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 
 // ---------- 乱数・小道具 ----------
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
@@ -461,7 +463,7 @@ class Sim{
     this.o=o;this.seed=o.seed>>>0;this.r=mulberry32(hash(this.seed,5));
     this.speed=SPEEDS[o.speed]||1.4;this.dur=o.regionLen||120;this.cycle=(o.cycle||8)*60;this.h0=STARTS[o.start]??7;
     this.kinds=KIND_ORDER.filter(k=>o.scenes.includes(k));if(!this.kinds.length)this.kinds=['japan'];
-    this.time=0;this.rt=0;this.ri=0;this.region=this.make(0);this.dist=0;
+    this.time=0;this.rt=0;this.ri=0;this.region=this.make(0);this.dist=0;this.endAt=o.endAt||0;
     this.log=[];this.fade=0;this.nextMsg=6;
     this.banner={text:'1つ目の街',sub:this.region.K.name,t0:0};
     this.say(`${this.region.K.name}を 歩く`);
@@ -470,17 +472,23 @@ class Sim{
   say(text){this.log.push({text,t:this.time});if(this.log.length>8)this.log.shift();}
   get z(){return-this.rt*this.speed;}
   get hour(){return(this.h0+this.time/this.cycle*24)%24;}
+  // 車に跳ねられる時刻（バッドエンドのとき。終わりの 2.6 秒前）
+  get tImp(){return this.endAt>=CRASH.min?this.endAt-CRASH.end:Infinity;}
+  // 次の街へ移ってよいか（終わり近くでは暗転させない）
+  nextOk(){return!(this.endAt>=CRASH.min)||(this.ri+1)*this.dur<this.endAt-8;}
   update(dt){
-    const h0=this.hour;
-    this.time+=dt;this.rt+=dt;this.dist+=this.speed*dt;
-    while(this.rt>=this.dur){
+    const h0=this.hour,ti=this.tImp,t0=this.time,wdt=clamp(ti-t0,0,dt);
+    this.time+=dt;this.rt+=wdt;this.dist+=this.speed*wdt;
+    while(this.rt>=this.dur&&this.nextOk()){
       this.rt-=this.dur;this.ri++;this.region=this.make(this.ri);
       this.banner={text:`${this.ri+1}つ目の街`,sub:this.region.K.name,t0:this.time-this.rt};
       this.say(`${this.region.K.name}に 着いた`);
     }
-    this.fade=clamp(Math.max(1-this.rt/1.1,1-(this.dur-this.rt)/1.1),0,1);
+    this.fade=clamp(Math.max(1-this.rt/1.1,this.nextOk()?1-(this.dur-this.rt)/1.1:0),0,1);
     if(this.ri===0&&this.rt<1.1)this.fade=0;
     const h1=this.hour;
+    for(const[k,t]of CRASH.msgs)if(t0<ti+k&&ti+k<=this.time)this.say(t);
+    if(this.time>ti-3){this.region.prune(Math.floor(-this.z/SEG));return;}
     for(const[h,t]of TIME_MSGS)if(h0<h1?(h0<h&&h<=h1):(h>h0||h<=h1))this.say(t);
     while(this.time>=this.nextMsg){
       const L=this.r()<.7?this.region.K.msgs:COMMON_MSGS;
@@ -493,6 +501,23 @@ class Sim{
     const R=this.region,z=this.z,P=t=>[R.px(t),R.py(t),t];
     return{R,z,P,pos:P(z),phase:this.dist/.72*Math.PI};
   }
+  // バッドエンドの車。tau は跳ねられてからの秒（前はマイナス）。車はこちらへ向かって走る（+z）
+  crash(){
+    const ti=this.tImp;if(this.time<ti-CRASH.lead)return null;
+    const tau=this.time-ti,{z,P}=this.pose(),V=CRASH.v,A=CRASH.brake,tb=clamp(tau,0,V/A);
+    const cz=z-2.3+(tau<0?(V+this.speed)*tau:V*tb-.5*A*tb*tb);
+    return{tau,z:cz,pos:P(cz),dir:norm(sub(P(cz+1),P(cz)))};
+  }
+}
+// バッドエンド：lead 秒前に車が見え、終わりの end 秒前に跳ねられる。min 秒より短い書き出しでは起こさない
+const CRASH={lead:3.6,end:2.6,min:10,v:16,brake:30,
+  msgs:[[-2.6,'車の 音が 近づいてくる'],[-.8,'あっ'],[.9,'…']],
+  cols:[C(236,236,232),C(200,40,40),C(40,70,150),C(30,30,34),C(230,190,40)]};
+// 跳ね飛ばされた体の動き（足もとの位置・後ろへ回る角度）。着地は air 秒後
+function thrown(tau){
+  const air=1.05,k=clamp(tau/air,0,1),e=1-(1-k)*(1-k),ta=Math.min(tau,air);
+  const back=5.5*ta+Math.max(0,1-Math.exp(-(tau-air)*4))*(tau>air?.8:0);
+  return{back,up:Math.max(0,5*ta-4.9*ta*ta),ang:e*Math.PI*2.5,lie:k};
 }
 
 // 時刻ごとの空と光
@@ -594,6 +619,21 @@ function personMesh(ph,coat){
   return new Float32Array(m.v);
 }
 
+// 車（前は +z）。ライトはいつも光る
+function carMesh(col){
+  const m=new Mesh(),dk=C(26,26,28),glass=C(46,58,70),dim=col.map(v=>v*.8);
+  m.box(-.9,.32,-2.1,.9,.95,2.1,col);
+  m.box(-.78,.95,-1.3,.78,1.45,.75,glass);
+  m.box(-.8,1.45,-1.25,.8,1.52,.7,dim);
+  for(const sx of[-1,1]){
+    for(const wz of[-1.35,1.35])m.box(sx*.93,.02,wz-.34,sx*.62,.62,wz+.34,dk);
+    m.box(sx*.78,.62,2.1,sx*.42,.8,2.14,C(255,250,220),1);
+    m.box(sx*.84,.66,-2.14,sx*.5,.82,-2.1,C(255,40,30),1);
+  }
+  m.box(-.3,.42,2.1,.3,.6,2.13,dk);
+  return new Float32Array(m.v);
+}
+
 class Street3D{
   constructor(){
     this.cv=document.createElement('canvas');
@@ -608,7 +648,7 @@ class Street3D{
     const r=mulberry32(4242),bg=[];
     for(let i=0;i<1100;i++){const u=r()*1.1-.1,t=r()*6.2832,s=Math.sqrt(1-u*u),b=.35+r()*.65;bg.push(s*Math.cos(t),u,s*Math.sin(t),b,b,b*(.9+r()*.2),.8+r()*1.5);}
     this.bg=this.buf(new Float32Array(bg));this.bgN=bg.length/7;
-    this.person=gl.createBuffer();this.cache=new Map();this.region=null;
+    this.person=gl.createBuffer();this.cache=new Map();this.region=null;this.cars=new Map();
   }
   buf(data){const gl=this.gl,b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);return b;}
   attribs(P,list,stride){
@@ -626,16 +666,27 @@ class Street3D{
     const gl=this.gl,cv=this.cv;
     if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
     gl.viewport(0,0,w,h);gl.bindVertexArray(this.vao);
-    const{R,z,P,pos,phase}=sim.pose(),far=R.K.far,sky=skyAt(sim.hour);
-    let eye,target,showMe=look.view==='chase';
+    const{R,z,P,pos,phase}=sim.pose(),far=R.K.far,sky=skyAt(sim.hour),cr=sim.crash(),hit=cr&&cr.tau>0?cr.tau:0;
+    let eye,target,up=[0,1,0],showMe=look.view==='chase';
     if(showMe){
       const b=P(z+4.4);eye=[b[0],b[1]+2.3,b[2]];const t=P(z-7);target=[t[0],t[1]+1.2,t[2]];
+      // 跳ねられたら、うしろ上へ引いて倒れた所を見下ろす
+      if(hit){const k=smooth(clamp(hit/1.1,0,1)),b2=P(z+12),t2=P(z+5);
+        eye=eye.map((v,i)=>lerp(v,[b2[0],b2[1]+4,b2[2]][i],k));target=target.map((v,i)=>lerp(v,[t2[0],t2[1]+.3,t2[2]][i],k));}
+    }else if(hit){
+      // 目線ごと後ろへ飛ばされ、回りながら仰向けに落ちる
+      const T=thrown(hit),f=norm(sub(P(z-1),pos)),c=Math.cos(T.ang),s=Math.sin(T.ang),roll=.35*T.lie;
+      const bp=P(z+T.back);eye=[bp[0],bp[1]+lerp(1.6,.18,T.lie)+T.up,bp[2]];
+      const dir=[f[0]*c,s,f[2]*c],u0=[-f[0]*s,c,-f[2]*s],x=cross(dir,u0);
+      up=u0.map((v,i)=>v*Math.cos(roll)+x[i]*Math.sin(roll));target=eye.map((v,i)=>v+dir[i]);
     }else{
-      const bob=.035*Math.abs(Math.sin(phase)),sway=.015*Math.sin(phase/2),gl2=.13*Math.sin(sim.time*.21)*Math.sin(sim.time*.07+1);
+      // 車に気づくと、よそ見をやめて前を見る
+      const see=cr?1-smooth(clamp((cr.tau+1.6)/.8,0,1)):1;
+      const bob=.035*Math.abs(Math.sin(phase)),sway=.015*Math.sin(phase/2),gl2=see*.13*Math.sin(sim.time*.21)*Math.sin(sim.time*.07+1);
       eye=[pos[0]+sway,pos[1]+1.6+bob,pos[2]];const t=P(z-8);
       const dx=t[0]-eye[0],dz=t[2]-eye[2];target=[eye[0]+dx*Math.cos(gl2)-dz*Math.sin(gl2),t[1]+1.45,eye[2]+dx*Math.sin(gl2)+dz*Math.cos(gl2)];
     }
-    const vp=mul(persp((look.aspect==='16:9'?60:64)*Math.PI/180,w/h,.05,far),lookAt(eye,target,[0,1,0]));
+    const vp=mul(persp((look.aspect==='16:9'?60:64)*Math.PI/180,w/h,.05,far),lookAt(eye,target,up));
     const wire=look.wire,black=[0,0,0],hor=wire?black:sky.hor,zen=wire?black:sky.zen;
     gl.disable(gl.DEPTH_TEST);gl.depthMask(false);gl.disable(gl.BLEND);
     for(let i=0;i<8;i++)gl.disableVertexAttribArray(i);
@@ -658,10 +709,24 @@ class Street3D{
     const cur=Math.floor(-z/SEG),ahead=Math.ceil(far/SEG)+1,lay=[['aPos',3],['aCol',3],['aBary',3],['aGlow',1]];
     for(let i=Math.max(0,cur-1);i<=cur+ahead;i++){const s=this.segGL(R,i);gl.bindBuffer(gl.ARRAY_BUFFER,s.vb);this.attribs(M,lay,10);gl.drawArrays(gl.TRIANGLES,0,s.n);}
     for(const k of[...this.cache.keys()])if(k<cur-2){gl.deleteBuffer(this.cache.get(k).vb);this.cache.delete(k);}
+    if(cr){
+      const ci=hash(sim.seed,31)%CRASH.cols.length;let cb=this.cars.get(ci);
+      if(!cb){const d=carMesh(CRASH.cols[ci]);cb={vb:this.buf(d),n:d.length/10};this.cars.set(ci,cb);}
+      const zA=cr.dir,xA=norm(cross([0,1,0],zA)),yA=cross(zA,xA);
+      gl.uniformMatrix4fv(u.uModel,false,[...xA,0,...yA,0,...zA,0,...cr.pos,1]);
+      gl.bindBuffer(gl.ARRAY_BUFFER,cb.vb);this.attribs(M,lay,10);gl.drawArrays(gl.TRIANGLES,0,cb.n);
+    }
     if(showMe){
-      const d=personMesh(phase,look.acc.map(v=>v/255*.75+.08));
+      const d=personMesh(hit?0:phase,look.acc.map(v=>v/255*.75+.08));
       const f=norm(sub(P(z-1),pos)),zA=f.map(v=>-v),xA=norm(cross([0,1,0],zA)),yA=cross(zA,xA);
-      gl.uniformMatrix4fv(u.uModel,false,[...xA,0,...yA,0,...zA,0,...pos,1]);
+      let mm=[...xA,0,...yA,0,...zA,0,...pos,1];
+      if(hit){
+        // 腰のあたりを軸に後ろへ回りながら飛び、仰向けに落ちる
+        const T=thrown(hit),bp=P(z+T.back),c=Math.cos(T.ang),s=Math.sin(T.ang),pv=.9;
+        mm=mul([...xA,0,...yA,0,...zA,0,bp[0],bp[1]+T.up-.77*T.lie,bp[2],1],
+          [1,0,0,0,0,c,s,0,0,-s,c,0,0,pv-pv*c,-pv*s,1]);
+      }
+      gl.uniformMatrix4fv(u.uModel,false,mm);
       gl.bindBuffer(gl.ARRAY_BUFFER,this.person);gl.bufferData(gl.ARRAY_BUFFER,d,gl.DYNAMIC_DRAW);this.attribs(M,lay,10);gl.drawArrays(gl.TRIANGLES,0,d.length/10);
     }
   }
@@ -699,8 +764,26 @@ function drawFrame(g,W,H,sim,look){
   }
   const ph=PIXELS[cfg.pixel];let ih=ph?Math.min(v.h,ph):v.h;const iw=Math.max(2,Math.round(ih*v.w/v.h));ih=Math.round(ih);
   view3d.render(iw,ih,sim,look);
-  g.imageSmoothingEnabled=!ph;g.drawImage(view3d.cv,v.x,v.y,v.w,v.h);g.imageSmoothingEnabled=true;
+  const hit=sim.time-sim.tImp;
+  g.save();g.beginPath();g.rect(v.x,v.y,v.w,v.h);g.clip();
+  // ぶつかった瞬間に画面がゆれる
+  const sh=hit>0?v.h*.03*Math.exp(-hit*3.5):0,sx=sh*Math.sin(sim.time*97),sy=sh*Math.cos(sim.time*83);
+  g.imageSmoothingEnabled=!ph;g.drawImage(view3d.cv,v.x+sx-Math.abs(sh),v.y+sy-Math.abs(sh),v.w+Math.abs(sh)*2,v.h+Math.abs(sh)*2);g.imageSmoothingEnabled=true;
+  g.restore();
   if(sim.fade>0){g.fillStyle=`rgba(0,0,0,${sim.fade})`;g.fillRect(v.x,v.y,v.w,v.h);}
+  if(hit>0){
+    if(hit<.07){g.fillStyle='rgba(255,255,255,.9)';g.fillRect(v.x,v.y,v.w,v.h);}
+    g.fillStyle=`rgba(200,0,0,${.5*Math.exp(-hit*1.6)+.25*smooth(clamp((hit-.6)/.8,0,1))})`;g.fillRect(v.x,v.y,v.w,v.h);
+    const dark=smooth(clamp((hit-1.1)/.6,0,1));
+    if(dark>0){g.fillStyle=`rgba(0,0,0,${dark})`;g.fillRect(v.x,v.y,v.w,v.h);}
+    const ta=clamp((hit-1.5)/.4,0,1);
+    if(ta>0){
+      const fs=Math.round(v.h*.13);g.textAlign='center';g.textBaseline='middle';g.lineJoin='round';
+      g.font=`${fs}px ${FONT}`;g.fillStyle=`rgba(220,30,30,${ta})`;g.fillText('BAD END',v.x+v.w/2,v.y+v.h/2-fs*.3);
+      g.font=`${Math.round(fs*.32)}px ${FONT}`;g.fillStyle=rgb(look.ui,ta*.85);g.fillText('散歩は ここで 終わった',v.x+v.w/2,v.y+v.h/2+fs*.55);
+      g.textAlign='left';
+    }
+  }
   const col=rgb(look.ui);
   const age=sim.time-sim.banner.t0,ba=clamp(Math.min(age/.4,(3-age)/.6),0,1);
   if(ba>0){
@@ -751,6 +834,8 @@ function drawFrame(g,W,H,sim,look){
       g.fillStyle=rgb(look.ui,.16);g.strokeStyle=rgb(look.ui,.5);
       g.fillRect(X(o.x)-o.w*S/2,Y(o.z)-o.d*S/2,o.w*S,o.d*S);g.strokeRect(X(o.x)-o.w*S/2,Y(o.z)-o.d*S/2,o.w*S,o.d*S);
     }
+    const cr=sim.crash();
+    if(cr){g.save();g.translate(X(cr.pos[0]),Y(cr.z));g.fillStyle='rgb(230,60,50)';g.fillRect(-.9*S,-2.1*S,1.8*S,4.2*S);g.restore();}
     g.fillStyle=rgb(look.acc);g.beginPath();g.moveTo(cx,cy-6*s);g.lineTo(cx+4.5*s,cy+4*s);g.lineTo(cx-4.5*s,cy+4*s);g.closePath();g.fill();
     g.restore();}
   // つぶやき
@@ -811,9 +896,10 @@ const OPTS={
   minutes:[[1,'1分'],[3,'3分'],[5,'5分'],[10,'10分']],
   fps:[[30,'30コマ/秒'],[60,'60コマ/秒']],
   lyrics:[[true,'出す'],[false,'出さない']],
+  ending:[['crash','車に跳ねられる'],['none','そのまま歩く']],
 };
 const RESTART=new Set(['speed','regionLen','cycle','start']);
-const DEF={aspect:'16:9',res:'1920x1080',scenes:[...KIND_ORDER],style:'solid',line:'auto',view:'eye',deco:true,pixel:'full',speed:'mid',regionLen:120,cycle:8,start:'morning',seed:1+((Math.random()*999999)|0),minutes:5,fps:30,lyrics:true};
+const DEF={aspect:'16:9',res:'1920x1080',scenes:[...KIND_ORDER],style:'solid',line:'auto',view:'eye',deco:true,pixel:'full',speed:'mid',regionLen:120,cycle:8,start:'morning',seed:1+((Math.random()*999999)|0),minutes:5,fps:30,lyrics:true,ending:'crash'};
 let cfg={...DEF};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('endless-walk')||'{}'));}catch(e){}
 if(!RES[cfg.aspect].some(r=>r[0]===cfg.res))cfg.res=RES[cfg.aspect].at(-1)[0];
@@ -823,12 +909,45 @@ const save=()=>{try{localStorage.setItem('endless-walk',JSON.stringify(cfg));}ca
 
 const $=s=>document.querySelector(s), out=$('#out'), octx=out.getContext('2d');
 let sim, playing=true, exporting=false, cancelled=false;
-const newSim=()=>new Sim({seed:cfg.seed,speed:cfg.speed,regionLen:cfg.regionLen,cycle:cfg.cycle,start:cfg.start,scenes:cfg.scenes,cfg});
-function restart(){sim=newSim();if(snd&&playing)player.play(snd.buf,0);}
+// バッドエンドにする長さ（曲を入れたときだけ。0 なら起こさない）
+const endAtFor=sec=>snd&&cfg.ending==='crash'&&sec>=CRASH.min?sec:0;
+const newSim=()=>new Sim({seed:cfg.seed,speed:cfg.speed,regionLen:cfg.regionLen,cycle:cfg.cycle,start:cfg.start,scenes:cfg.scenes,cfg,endAt:endAtFor(cfg.minutes*60)});
+function restart(){sim=newSim();player.sfxStop();if(snd&&playing)player.play(snd.buf,0);}
 
 // ---------- 音 ----------
 let snd=null;
 const AINFO='入れると、その音付きで書き出します。長さは曲に合わせます。曲より長くすると頭から繰り返し、どちらの場合も最後の1.5秒で音を小さくして終えます。この画面に音のファイルを放り込んでも入ります。';
+// 跳ねられる音（クラクション→急ブレーキ→ぶつかる音→ガラス）。lead 秒目がぶつかる瞬間
+const SFX_LEAD=1.4,sfxCache=new Map();
+function crashSfx(sr){
+  if(sfxCache.has(sr))return sfxCache.get(sr);
+  const n=Math.round(sr*3.2),d=new Float32Array(n),r=mulberry32(909),I=Math.round(SFX_LEAD*sr);
+  for(let i=0;i<n;i++){
+    const t=i/sr,ti=t-SFX_LEAD;let v=0;
+    if(t<.95){const e=Math.min(1,t/.02,(.95-t)/.04);v+=.22*e*(Math.tanh(3*Math.sin(6.2832*415*t))+Math.tanh(3*Math.sin(6.2832*523*t)))/2;}
+    d[i]=v;
+  }
+  // 急ブレーキ：ノイズを細い帯に絞る（ゆらぐ高さ）
+  let y1=0,y2=0;
+  for(let i=Math.round(.8*sr);i<I+Math.round(.25*sr);i++){
+    const t=i/sr,f=2400+500*Math.sin(t*37),q=.02,w=6.2832*f/sr,a=1-q*w;
+    const y=(r()*2-1)*q*w*4+2*a*Math.cos(w)*y1-a*a*y2;y2=y1;y1=y;
+    const e=Math.min(1,(t-.8)/.08,(I/sr+.25-t)/.15);d[i]+=clamp(y,-1,1)*.5*e;
+  }
+  // どすん（低い音と短いノイズ）
+  let lp=0;
+  for(let i=I;i<n;i++){
+    const t=(i-I)/sr;lp+=((r()*2-1)-lp)*.25;
+    d[i]+=.9*Math.sin(6.2832*(45*t+30*(1-Math.exp(-t*20))/20))*Math.exp(-t*9)+.6*lp*Math.exp(-t*22);
+  }
+  // ガラスの小さな音
+  for(let k=0;k<14;k++){
+    const t0=SFX_LEAD+.05+r()*.7,f=3000+r()*4000,i0=Math.round(t0*sr);
+    for(let i=i0;i<Math.min(n,i0+sr*.12);i++){const t=(i-i0)/sr;d[i]+=.07*Math.sin(6.2832*f*t)*Math.exp(-t*40);}
+  }
+  for(let i=0;i<n;i++)d[i]=clamp(d[i],-1,1);
+  sfxCache.set(sr,d);return d;
+}
 // プレビュー用の再生（ブラウザが鳴らせない形式でも、解いた後の波形を直接鳴らす）
 const player={ctx:null,src:null,t0:0,
   unlock(){try{if(!this.ctx)this.ctx=new (window.AudioContext||window.webkitAudioContext)();this.ctx.resume();}catch(e){}},
@@ -839,6 +958,13 @@ const player={ctx:null,src:null,t0:0,
     this.src=s;this.t0=this.ctx.currentTime-off;
   },
   stop(){if(this.src){try{this.src.stop();}catch(e){}this.src.disconnect();this.src=null;}},
+  sfx(at){
+    this.unlock();if(!this.ctx)return;
+    const d=crashSfx(this.ctx.sampleRate),off=Math.max(0,at),b=this.ctx.createBuffer(1,d.length,this.ctx.sampleRate);
+    b.copyToChannel(d,0);const s=this.ctx.createBufferSource();s.buffer=b;s.connect(this.ctx.destination);
+    if(off<b.duration)s.start(0,off);this.fx=s;
+  },
+  sfxStop(){if(this.fx){try{this.fx.stop();}catch(e){}this.fx=null;}},
   pos(buf){return(this.ctx.currentTime-this.t0)%buf.duration;},
 };
 // MP4（.m4a）の中から Opus の音の粒を取り出す
@@ -1014,8 +1140,14 @@ let last=performance.now();
 function loop(ts){
   const dt=Math.min(.25,(ts-last)/1000);last=ts;
   if(!exporting){
+    sim.endAt=endAtFor(cfg.minutes*60);
+    const pt=sim.time;
     if(playing)sim.update(dt);
-    if(snd&&playing&&player.src){const D=snd.buf.duration,g=Math.abs(player.pos(snd.buf)-sim.time%D);if(Math.min(g,D-g)>.3)player.play(snd.buf,sim.time);}
+    // バッドエンド：音を鳴らし、終わったら曲を止めて、少し置いて最初から
+    const fx=sim.tImp-SFX_LEAD;
+    if(playing&&pt<fx&&sim.time>=fx)player.sfx(sim.time-fx);
+    if(sim.endAt&&sim.time>=sim.endAt){player.stop();if(sim.time>=sim.endAt+2.5)restart();}
+    else if(snd&&playing&&player.src){const D=snd.buf.duration,g=Math.abs(player.pos(snd.buf)-sim.time%D);if(Math.min(g,D-g)>.3)player.play(snd.buf,sim.time);}
     drawFrame(octx,out.width,out.height,sim,lookFor(sim));
     $('#clock').textContent=`${fmt(sim.time)}　${sim.ri+1}つ目の街　${clockText(sim.hour)}`;
   }
@@ -1071,7 +1203,7 @@ async function exportMp4(){
     }
     if(!aconf){alert('このブラウザでは音付きの動画を作れません。Chrome か Edge で開いてください。');return;}
   }
-  const name=`endless-dungeon_${cfg.seed}_${W}x${H}.mp4`;
+  const name=`endless-walk_${cfg.seed}_${W}x${H}.mp4`;
   let stream=null,target=null;
   if(window.showSaveFilePicker){
     try{const fh=await showSaveFilePicker({suggestedName:name,types:[{description:'MP4 動画',accept:{'video/mp4':['.mp4']}}]});
@@ -1084,7 +1216,9 @@ async function exportMp4(){
   let err=null;
   const enc=new VideoEncoder({output:(ch,meta)=>muxer.addVideoChunk(ch,meta),error:e=>{err=e;}});
   enc.configure(config);
-  let aenc=null,apos=0;const atotal=Math.round(total/fps*asr),FADE=1.5;
+  let aenc=null,apos=0;const atotal=Math.round(total/fps*asr),FADE=1.5,endAt=endAtFor(total/fps);
+  // バッドエンドの効果音（曲のフェードとは別に、上から重ねる）
+  const sfx=endAt?crashSfx(asr):null,sfx0=endAt?Math.round((endAt-CRASH.end-SFX_LEAD)*asr):0;
   if(aconf){aenc=new AudioEncoder({output:(ch,meta)=>muxer.addAudioChunk(ch,fixAacMeta(meta,aconf)),error:e=>{err=e;}});aenc.configure(aconf);}
   // 動画のコマに追いつくまで音を流し込む（曲が短ければ頭から繰り返し、最後はしぼる）
   const feed=until=>{
@@ -1092,14 +1226,14 @@ async function exportMp4(){
     const L=snd.buf.length,src=[...Array(ach)].map((_,c)=>snd.buf.getChannelData(Math.min(c,snd.buf.numberOfChannels-1)));
     while(apos<until){
       const n=Math.min(4096,until-apos),data=new Float32Array(n*ach);
-      for(let c=0;c<ach;c++)for(let k=0;k<n;k++){const s=apos+k,rem=(atotal-s)/asr;data[c*n+k]=src[c][s%L]*(rem<FADE?rem/FADE:1);}
+      for(let c=0;c<ach;c++)for(let k=0;k<n;k++){const s=apos+k,rem=(atotal-s)/asr;data[c*n+k]=src[c][s%L]*(rem<FADE?rem/FADE:1)+(sfx&&s>=sfx0&&s-sfx0<sfx.length?sfx[s-sfx0]:0);data[c*n+k]=clamp(data[c*n+k],-1,1);}
       const ad=new AudioData({format:'f32-planar',sampleRate:asr,numberOfFrames:n,numberOfChannels:ach,timestamp:Math.round(apos/asr*1e6),data});
       aenc.encode(ad);ad.close();apos+=n;
     }
   };
   player.stop();
   exporting=true;cancelled=false;document.body.classList.add('lock');$('#go').disabled=true;$('#prog').classList.add('on');
-  const xs=newSim(),dt=1/fps,t0=performance.now();
+  const xs=newSim(),dt=1/fps,t0=performance.now();xs.endAt=endAt;
   const tick=()=>new Promise(r=>setTimeout(r,0));
   try{
     for(let i=0;i<total;i++){
@@ -1138,7 +1272,7 @@ async function exportMp4(){
 try{view3d=new Street3D();}catch(e){document.body.innerHTML='<p style="padding:24px">このブラウザでは3D表示が使えません。</p>';throw e;}
 renderUI();setupTabs();sizeCanvas();restart();
 $('#ver').textContent='v'+VERSION;
-$('#play').onclick=()=>{playing=!playing;$('#play').textContent=playing?'❚❚':'▶';if(snd){if(playing)player.play(snd.buf,sim.time);else player.stop();}};
+$('#play').onclick=()=>{playing=!playing;$('#play').textContent=playing?'❚❚':'▶';player.sfxStop();if(snd){if(playing&&!(sim.endAt&&sim.time>=sim.endAt))player.play(snd.buf,sim.time);else player.stop();}};
 $('#afile').onchange=e=>{const f=e.target.files[0];if(f)loadAudio(f);e.target.value='';};
 $('#aclear').onclick=()=>clearAudio();
 $('#lfile').onchange=e=>{const f=e.target.files[0];if(f)loadLyrics(f);e.target.value='';};
