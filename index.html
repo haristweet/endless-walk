@@ -103,8 +103,9 @@ input[type=number]{width:110px;background:#1b1b20;border:1px solid var(--line);b
           <h3>歌詞</h3><div class="seg" data-key="lyrics"></div>
           <div class="row" style="margin-top:6px"><label class="chip" style="display:inline-flex;align-items:center">歌詞のファイルを選ぶ<input type="file" id="lfile" accept=".lrc,.srt,.vtt,text/plain" hidden></label></div>
           <p class="note" id="linfo"></p>
-          <h3>終わり方</h3><div class="seg" data-key="ending"></div>
-          <p class="note">「車に跳ねられる」にすると、終わりの数秒前に前から車が走ってきて、曲が終わるところで跳ねられて BAD END になります（長さを曲と違えたときは、書き出しの終わりに合わせます）。</p>
+          <h3>終わり方</h3>
+          <label class="chip" style="display:inline-flex;align-items:center;gap:8px"><input type="checkbox" id="badend" style="width:18px;height:18px;margin:0;accent-color:var(--acc)">BAD END にする</label>
+          <p class="note">チェックを入れると、終わりの数秒前に前から車が走ってきて、曲が終わるところで跳ねられて BAD END になります（長さを曲と違えたときは、書き出しの終わりに合わせます）。</p>
         </div>
         <h3>長さ</h3>
         <div class="seg" data-key="minutes"></div>
@@ -896,10 +897,9 @@ const OPTS={
   minutes:[[1,'1分'],[3,'3分'],[5,'5分'],[10,'10分']],
   fps:[[30,'30コマ/秒'],[60,'60コマ/秒']],
   lyrics:[[true,'出す'],[false,'出さない']],
-  ending:[['crash','車に跳ねられる'],['none','そのまま歩く']],
 };
 const RESTART=new Set(['speed','regionLen','cycle','start']);
-const DEF={aspect:'16:9',res:'1920x1080',scenes:[...KIND_ORDER],style:'solid',line:'auto',view:'eye',deco:true,pixel:'full',speed:'mid',regionLen:120,cycle:8,start:'morning',seed:1+((Math.random()*999999)|0),minutes:5,fps:30,lyrics:true,ending:'crash'};
+const DEF={aspect:'16:9',res:'1920x1080',scenes:[...KIND_ORDER],style:'solid',line:'auto',view:'eye',deco:true,pixel:'full',speed:'mid',regionLen:120,cycle:8,start:'morning',seed:1+((Math.random()*999999)|0),minutes:5,fps:30,lyrics:true,badEnd:false};
 let cfg={...DEF};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('endless-walk')||'{}'));}catch(e){}
 if(!RES[cfg.aspect].some(r=>r[0]===cfg.res))cfg.res=RES[cfg.aspect].at(-1)[0];
@@ -910,7 +910,7 @@ const save=()=>{try{localStorage.setItem('endless-walk',JSON.stringify(cfg));}ca
 const $=s=>document.querySelector(s), out=$('#out'), octx=out.getContext('2d');
 let sim, playing=true, exporting=false, cancelled=false;
 // バッドエンドにする長さ（曲を入れたときだけ。0 なら起こさない）
-const endAtFor=sec=>snd&&cfg.ending==='crash'&&sec>=CRASH.min?sec:0;
+const endAtFor=sec=>snd&&cfg.badEnd&&sec>=CRASH.min?sec:0;
 const newSim=()=>new Sim({seed:cfg.seed,speed:cfg.speed,regionLen:cfg.regionLen,cycle:cfg.cycle,start:cfg.start,scenes:cfg.scenes,cfg,endAt:endAtFor(cfg.minutes*60)});
 function restart(){sim=newSim();player.sfxStop();if(snd&&playing)player.play(snd.buf,0);}
 
@@ -1121,7 +1121,7 @@ function renderUI(){
   const re=$('#res');re.innerHTML='';
   for(const[v,label]of RES[cfg.aspect]){const b=document.createElement('button');b.className='chip'+(cfg.res===v?' on':'');b.textContent=label;
     b.onclick=()=>{cfg.res=v;save();renderUI();sizeCanvas();};re.appendChild(b);}
-  $('#seed').value=cfg.seed;$('#mins').value=fmt(Math.round(cfg.minutes*60));
+  $('#seed').value=cfg.seed;$('#badend').checked=!!cfg.badEnd;$('#mins').value=fmt(Math.round(cfg.minutes*60));
 }
 function setupTabs(){
   const panel=$('#panel'),narrow=()=>matchMedia('(max-width:820px)').matches;
@@ -1275,6 +1275,7 @@ $('#ver').textContent='v'+VERSION;
 $('#play').onclick=()=>{playing=!playing;$('#play').textContent=playing?'❚❚':'▶';player.sfxStop();if(snd){if(playing&&!(sim.endAt&&sim.time>=sim.endAt))player.play(snd.buf,sim.time);else player.stop();}};
 $('#afile').onchange=e=>{const f=e.target.files[0];if(f)loadAudio(f);e.target.value='';};
 $('#aclear').onclick=()=>clearAudio();
+$('#badend').onchange=e=>{cfg.badEnd=e.target.checked;save();};
 $('#lfile').onchange=e=>{const f=e.target.files[0];if(f)loadLyrics(f);e.target.value='';};
 addEventListener('dragover',e=>e.preventDefault());
 addEventListener('drop',e=>{e.preventDefault();

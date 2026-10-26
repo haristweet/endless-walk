@@ -23,7 +23,7 @@ const cells = [];
 for (const [view, style, deco] of VIEWS) for (const t of TIMES) {
   cells.push(await p.evaluate(([view, style, deco, t]) => {
     playing = false; exporting = true;
-    Object.assign(cfg, { view, style, deco, aspect: '16:9', seed: 1234, scenes: [...KIND_ORDER], ending: 'crash' });
+    Object.assign(cfg, { view, style, deco, aspect: '16:9', seed: 1234, scenes: [...KIND_ORDER], badEnd: true });
     const s = newSim(), dt = 1 / 30;
     for (let k = 0; k < Math.round(t / dt); k++) s.update(dt);
     const c = document.createElement('canvas'); c.width = 480; c.height = 270;
